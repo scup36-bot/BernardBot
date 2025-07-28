@@ -1,4 +1,4 @@
-import telebot
+import telebot 
 import openai
 import requests
 import os
@@ -24,23 +24,30 @@ def text_to_speech(text, file_path="response.mp3"):
     )
     response.stream_to_file(file_path)
 
-# Обработка голосовых сообщений
-@bot.message_handler(content_types=['voice'])
-def handle_voice(message):
-    voice_info = bot.get_file(message.voice.file_id)
-    voice_file = requests.get(f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{voice_info.file_path}")
+# Обработка голосовых и текстовых сообщений
+@bot.message_handler(content_types=['voice', 'text'])
+def handle_message(message):
 
-    with open("voice.ogg", "wb") as file:
-        file.write(voice_file.content)
+    if message.content_type == 'voice':
+        voice_info = bot.get_file(message.voice.file_id)
+        voice_file = requests.get(f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{voice_info.file_path}")
 
-    user_text = speech_to_text("voice.ogg")
+        with open("voice.ogg", "wb") as file:
+            file.write(voice_file.content)
+
+        user_text = speech_to_text("voice.ogg")
+        os.remove("voice.ogg")
+
+    elif message.content_type == 'text':
+        user_text = message.text
+
     bot.reply_to(message, f"Вы сказали: {user_text}")
 
-    # Генерация ответа через GPT-4 Turbo
+    # Генерация ответа через GPT-4o (общий характер ответов)
     gpt_response = openai.ChatCompletion.create(
-        model="gpt-4-turbo",
+        model="gpt-4o",
         messages=[
-            {"role": "system", "content": "Ты профессиональный ассистент врача травматолога-ортопеда. Отвечай коротко, по делу, на русском языке."},
+            {"role": "system", "content": "Ты умный и дружелюбный виртуальный ассистент. Отвечай подробно и понятно на русском языке."},
             {"role": "user", "content": user_text}
         ]
     )
@@ -53,7 +60,6 @@ def handle_voice(message):
     with open("response.mp3", "rb") as audio:
         bot.send_voice(message.chat.id, audio)
 
-    os.remove("voice.ogg")
     os.remove("response.mp3")
 
 bot.polling(non_stop=True)
