@@ -25,9 +25,9 @@ def text_to_speech(text, file_path="response.mp3"):
     )
     response.stream_to_file(file_path)
 
-# Функция для поиска ссылок и картинок в тексте
+# Функция для извлечения ссылок и изображений из текста
 def extract_links_and_images(text):
-    url_pattern = r'(https?://\S+)' 
+    url_pattern = r'(https?://\S+)'
     urls = re.findall(url_pattern, text)
 
     image_urls = []
@@ -42,9 +42,10 @@ def extract_links_and_images(text):
 
     return image_urls, other_urls
 
-# Обработка голосовых и текстовых сообщений
-@bot.message_handler(content_types=['voice', 'text'])
+# Обработка голосовых, текстовых сообщений и изображений
+@bot.message_handler(content_types=['voice', 'text', 'photo'])
 def handle_message(message):
+    user_text = ""
 
     if message.content_type == 'voice':
         voice_info = bot.get_file(message.voice.file_id)
@@ -59,11 +60,17 @@ def handle_message(message):
     elif message.content_type == 'text':
         user_text = message.text
 
-    # Генерация ответа через GPT-4o (общий характер ответов)
+    elif message.content_type == 'photo':
+        photo_file = bot.get_file(message.photo[-1].file_id)
+        photo_url = f"https://api.telegram.org/file/bot{TELEGRAM_TOKEN}/{photo_file.file_path}"
+        user_text = "Что на этом изображении?"
+        user_text += f"\n{photo_url}"
+
+    # Генерация ответа через GPT-4o (естественные, живые ответы)
     gpt_response = openai.ChatCompletion.create(
         model="gpt-4o",
         messages=[
-            {"role": "system", "content": "Ты умный и дружелюбный виртуальный ассистент. Отвечай подробно и понятно на русском языке. Если нужно добавить картинку или ссылку, пиши их отдельной строкой, используя только корректные ссылки."},
+            {"role": "system", "content": "Ты умный и дружелюбный виртуальный ассистент-врач, который отвечает максимально естественно и понятно, как человек. Давай подробные ответы, рекомендации, резюме и напоминания, используй ссылки и картинки, если нужно."},
             {"role": "user", "content": user_text}
         ]
     )
