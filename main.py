@@ -1,7 +1,8 @@
-import telebot 
+import telebot
 import openai
 import requests
 import os
+import re
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -23,6 +24,22 @@ def text_to_speech(text, file_path="response.mp3"):
         input=text
     )
     response.stream_to_file(file_path)
+
+# Функция для поиска ссылок и картинок в тексте
+def extract_links_and_images(text):
+    url_pattern = r'(https?://\S+)'
+    urls = re.findall(url_pattern, text)
+
+    image_urls = []
+    other_urls = []
+
+    for url in urls:
+        if any(ext in url.lower() for ext in ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp']):
+            image_urls.append(url)
+        else:
+            other_urls.append(url)
+
+    return image_urls, other_urls
 
 # Обработка голосовых и текстовых сообщений
 @bot.message_handler(content_types=['voice', 'text'])
@@ -47,13 +64,24 @@ def handle_message(message):
     gpt_response = openai.ChatCompletion.create(
         model="gpt-4o",
         messages=[
-            {"role": "system", "content": "Ты умный и дружелюбный виртуальный ассистент. Отвечай подробно и понятно на русском языке."},
+            {"role": "system", "content": "Ты умный и дружелюбный виртуальный ассистент. Отвечай подробно и понятно на русском языке. Если необходимо, добавляй ссылки и картинки."},
             {"role": "user", "content": user_text}
         ]
     )
 
     reply_text = gpt_response.choices[0].message.content
     bot.send_message(message.chat.id, reply_text)
+
+    # Извлечение ссылок и картинок
+    image_urls, other_urls = extract_links_and_images(reply_text)
+
+    # Отправка картинок
+    for image_url in image_urls:
+        bot.send_photo(message.chat.id, image_url)
+
+    # Отправка ссылок
+    for url in other_urls:
+        bot.send_message(message.chat.id, url)
 
     # Генерация голосового ответа
     text_to_speech(reply_text)
@@ -63,3 +91,4 @@ def handle_message(message):
     os.remove("response.mp3")
 
 bot.polling(non_stop=True)
+
