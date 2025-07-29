@@ -27,17 +27,18 @@ def text_to_speech(text, file_path="response.mp3"):
 
 # Функция для поиска ссылок и картинок в тексте
 def extract_links_and_images(text):
-    url_pattern = r'(https?://\S+)'
+    url_pattern = r'(https?://\S+)' 
     urls = re.findall(url_pattern, text)
 
     image_urls = []
     other_urls = []
 
     for url in urls:
-        if any(ext in url.lower() for ext in ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp']):
-            image_urls.append(url)
+        cleaned_url = url.strip('()[]<>.,;:\"\'')
+        if any(ext in cleaned_url.lower() for ext in ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp']):
+            image_urls.append(cleaned_url)
         else:
-            other_urls.append(url)
+            other_urls.append(cleaned_url)
 
     return image_urls, other_urls
 
@@ -58,18 +59,17 @@ def handle_message(message):
     elif message.content_type == 'text':
         user_text = message.text
 
-    bot.reply_to(message, f"Вы сказали: {user_text}")
-
     # Генерация ответа через GPT-4o (общий характер ответов)
     gpt_response = openai.ChatCompletion.create(
         model="gpt-4o",
         messages=[
-            {"role": "system", "content": "Ты умный и дружелюбный виртуальный ассистент. Отвечай подробно и понятно на русском языке. Если необходимо, добавляй ссылки и картинки."},
+            {"role": "system", "content": "Ты умный и дружелюбный виртуальный ассистент. Отвечай подробно и понятно на русском языке. Если нужно добавить картинку или ссылку, пиши их отдельной строкой, используя только корректные ссылки."},
             {"role": "user", "content": user_text}
         ]
     )
 
     reply_text = gpt_response.choices[0].message.content
+
     bot.send_message(message.chat.id, reply_text)
 
     # Извлечение ссылок и картинок
@@ -91,4 +91,5 @@ def handle_message(message):
     os.remove("response.mp3")
 
 bot.polling(non_stop=True)
+
 
