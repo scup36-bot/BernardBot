@@ -11,7 +11,7 @@ import base64
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-openai.api_key = OPENAI_API_KEY
+client = openai.OpenAI(api_key=OPENAI_API_KEY)
 bot = Bot(token=TELEGRAM_TOKEN)
 dp = Dispatcher()
 
@@ -21,21 +21,25 @@ async def speech_to_text(audio_bytes):
     audio_buffer = io.BytesIO(audio_bytes)
     audio_buffer.name = f"{uuid.uuid4()}.ogg"
     try:
-        transcript = openai.Audio.transcribe("whisper-1", audio_buffer)
-        return transcript["text"]
+        transcript = client.audio.transcriptions.create(
+            model="whisper-1",
+            file=audio_buffer
+        )
+        return transcript.text
     except Exception as e:
         print(f"Speech recognition error: {e}")
         return None
 
 async def text_to_speech(text):
     try:
-        response = openai.Audio.speech.create(
+        response = client.audio.speech.create(
             model="tts-1-hd",
             voice="nova",
             input=text
         )
         audio_buffer = io.BytesIO()
-        response.stream_to_file(audio_buffer)
+        for chunk in response.iter_bytes():
+            audio_buffer.write(chunk)
         audio_buffer.seek(0)
         return audio_buffer
     except Exception as e:
@@ -45,7 +49,7 @@ async def text_to_speech(text):
 async def analyze_medical_image(image_bytes):
     encoded_string = base64.b64encode(image_bytes).decode()
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4-vision-preview",
             messages=[
                 {"role": "system", "content": "Ты врач-ассистент, подробно описываешь медицинские изображения и даешь рекомендации."},
@@ -108,7 +112,7 @@ async def handle_message(message: types.Message):
     context = user_context[user_id][-5:]
 
     try:
-        gpt_response = openai.ChatCompletion.create(
+        gpt_response = client.chat.completions.create(
             model="gpt-4o",
             messages=[{"role": "system", "content": "Ты виртуальный ассистент-врач, отвечай естественно и профессионально."}] + context
         )
