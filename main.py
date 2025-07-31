@@ -1,5 +1,4 @@
 import asyncio
-import aiogram
 from aiogram import Bot, Dispatcher, types
 import openai
 import aiohttp
@@ -7,7 +6,7 @@ import os
 import re
 import uuid
 import io
-from pydub import AudioSegment
+import base64
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -20,13 +19,10 @@ user_context = {}
 
 # Функция для распознавания голоса через Whisper API
 async def speech_to_text(audio_bytes):
-    audio_segment = AudioSegment.from_file(io.BytesIO(audio_bytes), format="ogg")
-    wav_buffer = io.BytesIO()
-    audio_segment.export(wav_buffer, format="wav")
-    wav_buffer.seek(0)
-
+    audio_buffer = io.BytesIO(audio_bytes)
+    audio_buffer.name = f"{uuid.uuid4()}.ogg"
     try:
-        transcript = openai.Audio.transcribe("whisper-1", wav_buffer)
+        transcript = openai.Audio.transcribe("whisper-1", audio_buffer)
         return transcript["text"]
     except Exception as e:
         return f"Ошибка распознавания речи: {str(e)}"
@@ -52,9 +48,13 @@ async def analyze_image(image_bytes):
     try:
         response = openai.ChatCompletion.create(
             model="gpt-4o",
-            messages=[{"role": "system", "content": "Ты врач-ассистент, описываешь медицинские изображения."},
-                      {"role": "user", "content": [{"type": "text", "text": "Подробно опиши изображение."},
-                                                      {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded_string}"}}]}]
+            messages=[
+                {"role": "system", "content": "Ты врач-ассистент, подробно описываешь медицинские изображения и даешь рекомендации."},
+                {"role": "user", "content": [
+                    {"type": "text", "text": "Подробно опиши медицинское изображение и дай ссылки на источники по выявленному состоянию."},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded_string}"}}
+                ]}
+            ]
         )
         return response.choices[0].message.content
     except Exception as e:
@@ -94,6 +94,19 @@ async def handle_message(message: types.Message):
         reply_text = await analyze_image(photo_bytes)
 
         await message.reply(reply_text)
+
+        image_urls, other_urls = extract_links_and_images(reply_text)
+
+        for image_url in image_urls:
+            await bot.send_photo(user_id, image_url)
+
+        for url in other_urls:
+            await bot.send_message(user_id, url)
+
+        audio_response = await text_to_speech(reply_text)
+        if audio_response:
+            await bot.send_voice(user_id, types.InputFile(audio_response, filename=f"{uuid.uuid4()}.mp3"))
+
         return
 
     else:
