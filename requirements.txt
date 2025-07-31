@@ -1,3 +1,5 @@
 pyTelegramBotAPI
 openai==0.28
 requests
+aiogram
+pydub
