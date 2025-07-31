@@ -101,7 +101,8 @@ async def handle_message(message: types.Message):
         await send_long_message(user_id, reply_text)
         audio_response = await text_to_speech(reply_text)
         if audio_response:
-            await bot.send_voice(user_id, types.InputFile(audio_response, filename=f"{uuid.uuid4()}.mp3"))
+            audio_response.seek(0)
+            await bot.send_voice(user_id, types.BufferedInputFile(audio_response.read(), filename=f"{uuid.uuid4()}.mp3"))
 
         return
 
@@ -132,7 +133,8 @@ async def handle_message(message: types.Message):
 
         audio_response = await text_to_speech(reply_text)
         if audio_response:
-            await bot.send_voice(user_id, types.InputFile(audio_response, filename=f"{uuid.uuid4()}.mp3"))
+            audio_response.seek(0)
+            await bot.send_voice(user_id, types.BufferedInputFile(audio_response.read(), filename=f"{uuid.uuid4()}.mp3"))
 
     except Exception as e:
         await message.reply(f"Ошибка обработки сообщения: {str(e)}")
