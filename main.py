@@ -70,6 +70,12 @@ def extract_links_and_images(text):
 
     return image_urls, other_urls
 
+async def send_long_message(chat_id, text):
+    max_length = 4096
+    parts = [text[i:i+max_length] for i in range(0, len(text), max_length)]
+    for part in parts:
+        await bot.send_message(chat_id, part)
+
 @dp.message()
 async def handle_message(message: types.Message):
     user_id = message.from_user.id
@@ -88,7 +94,7 @@ async def handle_message(message: types.Message):
                 photo_bytes = await resp.read()
         reply_text = await analyze_medical_image(photo_bytes)
 
-        await message.reply(reply_text)
+        await send_long_message(user_id, reply_text)
         audio_response = await text_to_speech(reply_text)
         if audio_response:
             await bot.send_voice(user_id, types.InputFile(audio_response, filename=f"{uuid.uuid4()}.mp3"))
@@ -104,13 +110,13 @@ async def handle_message(message: types.Message):
     try:
         gpt_response = openai.ChatCompletion.create(
             model="gpt-4o",
-            messages=[{"role": "system", "content": "Ты виртуальный ассистент-врач, отвечай естественно."}] + context
+            messages=[{"role": "system", "content": "Ты виртуальный ассистент-врач, отвечай естественно и профессионально."}] + context
         )
         reply_text = gpt_response.choices[0].message.content
 
         user_context[user_id].append({"role": "assistant", "content": reply_text})
 
-        await message.reply(reply_text)
+        await send_long_message(user_id, reply_text)
 
         image_urls, other_urls = extract_links_and_images(reply_text)
 
