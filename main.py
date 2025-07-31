@@ -70,10 +70,6 @@ def extract_links_and_images(text):
 
     return image_urls, other_urls
 
-def check_wake_word(text):
-    wake_words = ["бернард", "bernard", "ассистент", "доктор"]
-    return any(text.strip().lower().startswith(word) for word in wake_words)
-
 @dp.message()
 async def handle_message(message: types.Message):
     user_id = message.from_user.id
@@ -102,12 +98,7 @@ async def handle_message(message: types.Message):
     else:
         user_text = message.text
 
-    if not check_wake_word(user_text):
-        return
-
-    query = re.sub(r'^(бернард|bernard|ассистент|доктор)\s*', '', user_text, flags=re.IGNORECASE)
-
-    user_context.setdefault(user_id, []).append({"role": "user", "content": query})
+    user_context.setdefault(user_id, []).append({"role": "user", "content": user_text})
     context = user_context[user_id][-5:]
 
     try:
@@ -141,4 +132,3 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
-
