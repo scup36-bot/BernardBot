@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 
 from aiogram import Bot, Dispatcher, Router, F
+from aiogram.client.default import DefaultBotProperties
 from aiogram.types import Update, Message, BufferedInputFile
 from aiogram.filters import Command
 
@@ -37,7 +38,11 @@ TTS_PITCH    = os.getenv("TTS_PITCH", "0%")
 if not TELEGRAM_BOT_TOKEN:
     raise RuntimeError("TELEGRAM_BOT_TOKEN не задан")
 
-bot = Bot(token=TELEGRAM_BOT_TOKEN, parse_mode="Markdown")
+# Initialize the bot with default properties instead of using the removed
+# `parse_mode` argument. In aiogram>=3.7, passing parse_mode to Bot initializer
+# is not supported. Use DefaultBotProperties to configure defaults.
+defaults = DefaultBotProperties(parse_mode="Markdown")
+bot = Bot(token=TELEGRAM_BOT_TOKEN, defaults=defaults)
 dp  = Dispatcher()
 app = FastAPI()
 
