@@ -11,6 +11,8 @@ from aiogram.types import Update, Message, BufferedInputFile
 from aiogram.filters import Command
 
 import httpx
+import urllib.parse
+from PIL import Image
 
 # ================== НАСТРОЙКИ (ENV) ==================
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -282,7 +284,9 @@ async def cmd_start(message: Message):
         "Привет! Я Бернард.\n"
         "• Автодоставка длинных ответов (auto)\n"
         "• Псевдостриминг\n"
-        "• Память по токенам + pinned\n\n"
+        "• Память по токенам + pinned\n"
+        "• Возможность получения и обработки голосовых и фото сообщений\n"
+        "• Поиск статей с помощью /articles\n\n"
         "Команды:\n"
         "/context — показать контекст\n"
         "/pin текст — закрепить факт\n"
@@ -290,6 +294,7 @@ async def cmd_start(message: Message):
         "/remember текст — сохранить заметку\n"
         "/forget id — удалить заметку\n"
         "/reset — очистить историю\n"
+        "/articles запрос — найти статьи по теме\n"
     )
     await message.answer(text)
 
@@ -364,6 +369,80 @@ async def on_voice(message: Message):
     data = await azure_tts(text)
     if data:
         await message.answer_voice(BufferedInputFile(data, "speech.ogg"), caption="Озвучка")
+
+@router.message(F.photo)
+async def on_photo(message: Message):
+    """
+    Handle incoming photos. The bot downloads the highest resolution photo,
+    applies a simple grayscale conversion, and sends it back to the user.
+    """
+    try:
+        # Get the highest resolution photo (last in list)
+        photo = message.photo[-1]
+        file = await bot.get_file(photo.file_id)
+        file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file.file_path}"
+        async with httpx.AsyncClient(timeout=120) as client:
+            resp = await client.get(file_url)
+            resp.raise_for_status()
+            image_bytes = resp.content
+        # Convert the image to grayscale using Pillow
+        import io
+        img = Image.open(io.BytesIO(image_bytes))
+        img_gray = img.convert("L")
+        buf = io.BytesIO()
+        img_gray.save(buf, format="PNG")
+        buf.seek(0)
+        # Respond with a description and the processed image
+        await message.answer(
+            "Изображение получено. Вот версия в оттенках серого. Если нужно провести другой анализ, уточните запрос."
+        )
+        await bot.send_photo(
+            message.chat.id,
+            BufferedInputFile(buf.getvalue(), "processed.png"),
+        )
+    except Exception as e:
+        # In case of any failure, notify the user
+        await message.answer("Не удалось обработать изображение. Попробуйте отправить другое или попросите помощи.")
+
+@router.message(Command("articles"))
+async def cmd_articles(message: Message):
+    """
+    Search for recent scholarly articles via the CrossRef API and return a few DOIs.
+    Usage: /articles тема поиска
+    """
+    query = message.get_args().strip()
+    if not query:
+        return await message.answer("Укажите тему поиска, например: /articles артрит")
+    # Build search URL for CrossRef: search by title; limit results
+    params = {
+        "query.title": query,
+        "rows": "5",
+        "sort": "published",
+        "order": "desc",
+    }
+    url = "https://api.crossref.org/works?" + urllib.parse.urlencode(params)
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            res = await client.get(url)
+            res.raise_for_status()
+            data = res.json()
+        items = data.get("message", {}).get("items", [])
+        if not items:
+            return await message.answer("По вашему запросу статьи не найдены.")
+        lines = []
+        for item in items:
+            title_list = item.get("title", [])
+            title = title_list[0] if title_list else "Без названия"
+            doi = item.get("DOI")
+            link = f"https://doi.org/{doi}" if doi else ""
+            # Truncate title if too long
+            if len(title) > 120:
+                title = title[:117] + "…"
+            lines.append(f"• {title}\n{link}")
+        reply = "Вот несколько релевантных статей:\n\n" + "\n\n".join(lines)
+        await message.answer(reply, disable_web_page_preview=True)
+    except Exception:
+        await message.answer("Не удалось получить статьи. Попробуйте снова позже.")
 
 @router.message()
 async def on_message(message: Message):
