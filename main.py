@@ -446,6 +446,37 @@ async def cmd_articles(message: Message):
 
 @router.message()
 async def on_message(message: Message):
+    # If the incoming message contains a photo, handle the image first.
+    # This avoids sending the message to the LLM, which cannot see images.
+    if message.photo:
+        try:
+            # Get the highest resolution version of the photo
+            photo = message.photo[-1]
+            file = await bot.get_file(photo.file_id)
+            file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file.file_path}"
+            async with httpx.AsyncClient(timeout=120) as client:
+                resp = await client.get(file_url)
+                resp.raise_for_status()
+                image_bytes = resp.content
+            import io
+            img = Image.open(io.BytesIO(image_bytes))
+            img_gray = img.convert("L")
+            buf = io.BytesIO()
+            img_gray.save(buf, format="PNG")
+            buf.seek(0)
+            await message.answer(
+                "Изображение получено. Вот версия в оттенках серого. Если нужно провести другой анализ, уточните запрос."
+            )
+            await bot.send_photo(
+                message.chat.id,
+                BufferedInputFile(buf.getvalue(), "processed.png"),
+            )
+        except Exception:
+            await message.answer("Не удалось обработать изображение. Попробуйте отправить другое или попросите помощи.")
+        # We don't call the LLM for images because it cannot interpret photos.
+        return
+
+    # Otherwise process the message normally via the LLM
     user_text = message.text or ""
     add_message(message.chat.id, "user", user_text)
     ctx = build_context(message.chat.id)
