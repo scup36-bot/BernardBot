@@ -36,6 +36,80 @@ TTS_VOICE    = os.getenv("TTS_VOICE", "ru-RU-DmitryNeural")
 TTS_RATE     = os.getenv("TTS_RATE", "0%")
 TTS_PITCH    = os.getenv("TTS_PITCH", "0%")
 
+# ================== НАСТРОЙКИ РЕЖИМОВ И СТИЛЕЙ ==================
+# По умолчанию Бернард работает как травматолог‑ортопед. Пользователь может
+# переключать режимы через команду /mode, а также настраивать краткость
+# ответов (/brief, /detailed) и желаемую креативность (/temp low|mid|high).
+
+# Текущий режим. Возможные значения:
+#  - "ortho": клинический ассистент‑травматолог (по умолчанию)
+#  - "general": универсальный ассистент для любых тем
+#  - "coach": инструктор по восстановлению, спорту, здоровью
+#  - "translate": переводчик (двусторонний)
+#  - "writer": помощник по письменным материалам и резюме
+#  - "research": поиск и краткое резюме научных статей (использует существующую /articles)
+MODE: str = os.getenv("DEFAULT_MODE", "ortho").lower()
+
+# Текущая степень детализации ответа:
+#  - "normal": стандартный уровень
+#  - "brief": кратко (1–2 предложения)
+#  - "detailed": развёрнуто и структурировано
+VERBOSITY: str = "normal"
+
+# Предпочтительная креативность (температура) ответа:
+#  - "low", "mid", "high". Набор сохраняется для совместимости, но не
+#    передаётся напрямую в OpenAI API, поскольку GPT‑5 и некоторые
+#    версии GPT‑4o не поддерживают настройку temperature.
+TEMP_PREF: str = "mid"
+
+# Шаблоны системных сообщений для различных режимов. Эти строки будут
+# дополняться указаниями на стиль (краткость/детальность) в функции
+# build_system_prompt().
+MODE_PROMPTS = {
+    "ortho": (
+        "Ты — клинический ассистент‑травматолог и ортопед. "
+        "Отвечай практично: структурируй боль/жалобу, предложи тесты, возможные дифференциальные "
+        "диагнозы, варианты лечения и рекомендации по обращению к врачу. Помни про дисклеймер: "
+        "не ставь диагнозы и советуй обратиться к специалисту при наличии красных флагов."
+    ),
+    "general": (
+        "Ты — универсальный цифровой ассистент. Помогаешь в любых вопросах: "
+        "новости, технологии, советы по здоровью и быту, рецепты, путешествия, "
+        "личная эффективность. Отвечай дружелюбно и понятно."
+    ),
+    "coach": (
+        "Ты — инструктор по восстановлению и здоровому образу жизни. "
+        "Помогаешь с упражнениями, растяжкой, планированием тренировок, "
+        "профилактикой травм и рекомендациями по питанию и сну. Не даёшь медицинских диагнозов."
+    ),
+    "translate": (
+        "Ты — переводчик. Переводи текст между русским и английским языками, "
+        "сохраняй смысл, стиль и терминологию. Если требуется, можешь добавить "
+        "пояснения к сложным терминам."
+    ),
+    "writer": (
+        "Ты — помощник по письменным материалам: резюме, письма, статьи, посты. "
+        "Помогаешь структурировать мысли, сохранять правильный тон (деловой, дружелюбный, "
+        "нейтральный) и избегать ошибок."
+    ),
+    "research": (
+        "Ты — исследователь. Помогаешь искать научные публикации и статьи по ключевым "
+        "словам, формируешь краткие выводы и указываешь DOI/PMID, если доступны. "
+        "Используй команду /articles для поиска свежих статей."
+    ),
+}
+
+def build_system_prompt() -> str:
+    """Собирает системный промпт в зависимости от выбранного режима и стиля."""
+    base = MODE_PROMPTS.get(MODE, MODE_PROMPTS.get("general"))
+    extras = []
+    # Добавляем указания по краткости
+    if VERBOSITY == "brief":
+        extras.append("Отвечай максимально кратко (1–2 предложения).")
+    elif VERBOSITY == "detailed":
+        extras.append("Отвечай развёрнуто, структурируй ответ по пунктам.")
+    return (base + " " + " ".join(extras)).strip()
+
 # ================== БОТ / FASTAPI ==================
 if not TELEGRAM_BOT_TOKEN:
     raise RuntimeError("TELEGRAM_BOT_TOKEN не задан")
@@ -149,13 +223,12 @@ async def llm_generate(messages: List[dict]) -> str:
     from openai import OpenAI
     client = OpenAI(api_key=OPENAI_API_KEY)
     def _call():
-        # NOTE: Some OpenAI models (e.g. GPT‑5 as of Aug 2025) do not allow overriding the temperature
-        # parameter and will return an `unsupported_value` error if a custom temperature is provided.
-        # Leaving the temperature unset uses the model's default value (1.0) which is supported.
+        # Используем динамический системный промпт в зависимости от режима и стиля.
+        # Обратите внимание: не передаём параметр temperature — GPT‑5 и некоторые модели GPT‑4o не
+        # поддерживают его настройку и вернут ошибку unsupported_value, если он указан.
         r = client.chat.completions.create(
             model=OPENAI_MODEL,
-            messages=[{"role": "system", "content": SYSTEM_PROMPT}, *messages],
-            # intentionally omit `temperature` argument
+            messages=[{"role": "system", "content": build_system_prompt()}, *messages],
         )
         return r.choices[0].message.content
     return await asyncio.to_thread(_call)
@@ -362,6 +435,10 @@ async def cmd_start(message: Message):
         "/forget id — удалить заметку\n"
         "/reset — очистить историю\n"
         "/articles запрос — найти статьи по теме\n"
+        "/mode режим — переключить профиль (ortho, general, coach, translate, writer, research)\n"
+        "/brief — отвечать кратко\n"
+        "/detailed — отвечать развёрнуто\n"
+        "/temp low|mid|high — установить уровень креативности (не влияет на GPT‑5)\n"
     )
     await message.answer(text)
 
@@ -401,6 +478,59 @@ async def cmd_forget(message: Message):
 async def cmd_reset(message: Message):
     reset_chat(message.chat.id)
     await message.answer("История чата очищена.")
+
+# ====== Режимы и стиль ======
+
+@router.message(Command("mode"))
+async def cmd_mode(message: Message):
+    """
+    Переключает режим работы бота. Допустимые режимы: ortho, general,
+    coach, translate, writer, research. Если пользователь не указал аргумент,
+    бот перечисляет доступные режимы.
+    """
+    global MODE
+    parts = (message.text or "").split(" ", 1)
+    if len(parts) < 2 or not parts[1].strip():
+        # Сообщаем о доступных режимах
+        modes = ", ".join(MODE_PROMPTS.keys())
+        return await message.answer(f"Доступные режимы: {modes}. Используйте /mode <имя> для переключения.")
+    new_mode = parts[1].strip().lower()
+    if new_mode not in MODE_PROMPTS:
+        modes = ", ".join(MODE_PROMPTS.keys())
+        return await message.answer(f"Неизвестный режим: {new_mode}. Допустимые: {modes}.")
+    MODE = new_mode
+    await message.answer(f"Режим изменён на {new_mode}.")
+
+@router.message(Command("brief"))
+async def cmd_brief(message: Message):
+    """Устанавливает краткий стиль ответа."""
+    global VERBOSITY
+    VERBOSITY = "brief"
+    await message.answer("Теперь отвечаю кратко.")
+
+@router.message(Command("detailed"))
+async def cmd_detailed(message: Message):
+    """Устанавливает развёрнутый стиль ответа."""
+    global VERBOSITY
+    VERBOSITY = "detailed"
+    await message.answer("Теперь отвечаю развёрнуто.")
+
+@router.message(Command("temp"))
+async def cmd_temp(message: Message):
+    """
+    Устанавливает желаемый уровень креативности (temperature). Допустимые: low, mid, high.
+    Эти значения используются как подсказки и не передаются напрямую в OpenAI API
+    из‑за ограничений некоторых моделей.
+    """
+    global TEMP_PREF
+    parts = (message.text or "").split(" ", 1)
+    if len(parts) < 2 or not parts[1].strip():
+        return await message.answer("Использование: /temp low|mid|high")
+    level = parts[1].strip().lower()
+    if level not in {"low", "mid", "high"}:
+        return await message.answer("Недопустимое значение. Варианты: low, mid, high.")
+    TEMP_PREF = level
+    await message.answer(f"Предпочтительная креативность установлена на {level}.")
 
 @router.message(F.voice)
 async def on_voice(message: Message):
