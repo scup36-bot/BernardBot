@@ -275,6 +275,54 @@ async def transcribe_voice_ogg(ogg_bytes: bytes) -> str:
             except Exception:
                 pass
 
+# ================== Image Analysis (GPT-4o Vision) ==================
+# Анализируем изображение при помощи модели GPT-4o. На вход подаются байты изображения,
+# на выходе — текстовое описание содержимого снимка. В случае ошибки возвращается пустая строка.
+async def analyze_image(image_bytes: bytes) -> str:
+    """
+    Use OpenAI's GPT-4o model to generate a concise description of the given image.
+
+    The function encodes the image as base64 data URI and sends it to the model along with
+    an instruction. It returns the generated description or an empty string if any error occurs.
+    """
+    if not OPENAI_API_KEY:
+        return ""
+    try:
+        import base64
+        from openai import OpenAI
+        # Encode image to base64 data URI
+        encoded = base64.b64encode(image_bytes).decode("utf-8")
+        data_uri = f"data:image/png;base64,{encoded}"
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        # Compose messages for vision model. System prompt puts the assistant into clinical context.
+        messages = [
+            {
+                "role": "system",
+                "content": "Ты — врач‑ортопед и травматолог. Кратко и понятно опиши, что изображено на медицинском снимке: перечисли ключевые структуры, возможную патологию. Укажи, что описание не является диагнозом."
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Опиши, что изображено на снимке."},
+                    {"type": "image_url", "image_url": {"url": data_uri}}
+                ]
+            }
+        ]
+        # Use gpt-4o for vision; fallback to any model supporting images
+        model_name = os.getenv("OPENAI_VISION_MODEL", "gpt-4o")
+        def _call():
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                max_tokens=256,
+                temperature=0.4
+            )
+            return response.choices[0].message.content
+        description = await asyncio.to_thread(_call)
+        return description.strip() if description else ""
+    except Exception:
+        return ""
+
 # ================== HANDLERS ==================
 router = Router()
 
@@ -370,39 +418,9 @@ async def on_voice(message: Message):
     if data:
         await message.answer_voice(BufferedInputFile(data, "speech.ogg"), caption="Озвучка")
 
-@router.message(F.photo)
-async def on_photo(message: Message):
-    """
-    Handle incoming photos. The bot downloads the highest resolution photo,
-    applies a simple grayscale conversion, and sends it back to the user.
-    """
-    try:
-        # Get the highest resolution photo (last in list)
-        photo = message.photo[-1]
-        file = await bot.get_file(photo.file_id)
-        file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file.file_path}"
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.get(file_url)
-            resp.raise_for_status()
-            image_bytes = resp.content
-        # Convert the image to grayscale using Pillow
-        import io
-        img = Image.open(io.BytesIO(image_bytes))
-        img_gray = img.convert("L")
-        buf = io.BytesIO()
-        img_gray.save(buf, format="PNG")
-        buf.seek(0)
-        # Respond with a description and the processed image
-        await message.answer(
-            "Изображение получено. Вот версия в оттенках серого. Если нужно провести другой анализ, уточните запрос."
-        )
-        await bot.send_photo(
-            message.chat.id,
-            BufferedInputFile(buf.getvalue(), "processed.png"),
-        )
-    except Exception as e:
-        # In case of any failure, notify the user
-        await message.answer("Не удалось обработать изображение. Попробуйте отправить другое или попросите помощи.")
+# Удалён отдельный обработчик фотографий. Теперь всё управление изображениями находится
+# в основном обработчике on_message. Это предотвращает дублирование ответов и гарантирует,
+# что бот не отправит текстовый ответ от LLM для сообщений с изображением.
 
 @router.message(Command("articles"))
 async def cmd_articles(message: Message):
@@ -446,13 +464,29 @@ async def cmd_articles(message: Message):
 
 @router.message()
 async def on_message(message: Message):
-    # If the incoming message contains a photo, handle the image first.
-    # This avoids sending the message to the LLM, which cannot see images.
-    if message.photo:
-        try:
-            # Get the highest resolution version of the photo
-            photo = message.photo[-1]
-            file = await bot.get_file(photo.file_id)
+    # Если входящее сообщение содержит фотографию или документ с изображением,
+    # обрабатываем его сразу и не отправляем в LLM. Это позволяет корректно
+    # реагировать на пересланные фотографии, документы формата image/* и
+    # сообщения с подписью, в которых присутствует изображение.
+    try:
+        # Проверяем, есть ли список фотографий (обычные фото)
+        has_photo = getattr(message, "photo", None)
+        # Проверяем, является ли документ картинкой (например, пересланный
+        # снимок может приходить как документ с MIME-типа image/*)
+        has_image_doc = (
+            hasattr(message, "document")
+            and message.document is not None
+            and getattr(message.document, "mime_type", "").startswith("image/")
+        )
+        if has_photo or has_image_doc:
+            # Выбираем объект File для загрузки: либо последняя фотография в списке,
+            # либо сам документ. Далее запрашиваем файл у API Telegram и
+            # конвертируем его в оттенки серого.
+            if has_photo:
+                photo = message.photo[-1]
+                file = await bot.get_file(photo.file_id)
+            else:
+                file = await bot.get_file(message.document.file_id)
             file_url = f"https://api.telegram.org/file/bot{TELEGRAM_BOT_TOKEN}/{file.file_path}"
             async with httpx.AsyncClient(timeout=120) as client:
                 resp = await client.get(file_url)
@@ -464,16 +498,29 @@ async def on_message(message: Message):
             buf = io.BytesIO()
             img_gray.save(buf, format="PNG")
             buf.seek(0)
+            # Сначала отправляем сообщение об успешном получении изображения и саму обработанную картинку.
             await message.answer(
-                "Изображение получено. Вот версия в оттенках серого. Если нужно провести другой анализ, уточните запрос."
+                "Изображение получено. Вот версия в оттенках серого. Сейчас попробую описать его содержимое…"
             )
             await bot.send_photo(
                 message.chat.id,
                 BufferedInputFile(buf.getvalue(), "processed.png"),
             )
-        except Exception:
-            await message.answer("Не удалось обработать изображение. Попробуйте отправить другое или попросите помощи.")
-        # We don't call the LLM for images because it cannot interpret photos.
+            # Далее выполняем анализ изображения с помощью GPT‑4o и отправляем результат.
+            analysis = await analyze_image(image_bytes)
+            if analysis:
+                await message.answer(analysis)
+            else:
+                await message.answer(
+                    "Не удалось выполнить автоматический анализ изображения. Если вас интересует конкретная структура или вопрос — уточните его, и я помогу по тексту."
+                )
+            # Мы не отправляем сообщение в LLM, поскольку он не понимает изображения.
+            return
+    except Exception:
+        # В случае любой ошибки сообщаем пользователю и продолжаем работу (не вызываем LLM).
+        await message.answer(
+            "Не удалось обработать изображение. Попробуйте отправить другое изображение или попросите помощи."
+        )
         return
 
     # Otherwise process the message normally via the LLM
