@@ -295,15 +295,24 @@ async def analyze_image(image_bytes: bytes) -> str:
         data_uri = f"data:image/png;base64,{encoded}"
         client = OpenAI(api_key=OPENAI_API_KEY)
         # Compose messages for vision model. System prompt puts the assistant into clinical context.
+        # Compose a more detailed prompt for GPT‑Vision.  The system prompt now
+        # asks the assistant to act as an experienced orthopaedic surgeon and
+        # describe the image in greater detail, including relevant anatomical
+        # structures and any notable pathologies.  The assistant must still
+        # clarify that the description is not a definitive diagnosis.
         messages = [
             {
                 "role": "system",
-                "content": "Ты — врач‑ортопед и травматолог. Кратко и понятно опиши, что изображено на медицинском снимке: перечисли ключевые структуры, возможную патологию. Укажи, что описание не является диагнозом."
+                "content": (
+                    "Ты — опытный ортопед и травматолог. Подробно и точно опиши, что изображено на медицинском снимке: "
+                    "назови ключевые анатомические структуры, возможные патологические изменения и особенности. "
+                    "Добавь, что это описание не является окончательным диагнозом."
+                )
             },
             {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": "Опиши, что изображено на снимке."},
+                    {"type": "text", "text": "Опиши детально, что изображено на снимке."},
                     {"type": "image_url", "image_url": {"url": data_uri}}
                 ]
             }
@@ -314,8 +323,8 @@ async def analyze_image(image_bytes: bytes) -> str:
             response = client.chat.completions.create(
                 model=model_name,
                 messages=messages,
-                max_tokens=256,
-                temperature=0.4
+                max_tokens=512,
+                temperature=0.3
             )
             return response.choices[0].message.content
         description = await asyncio.to_thread(_call)
