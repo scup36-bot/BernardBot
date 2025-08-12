@@ -149,10 +149,13 @@ async def llm_generate(messages: List[dict]) -> str:
     from openai import OpenAI
     client = OpenAI(api_key=OPENAI_API_KEY)
     def _call():
+        # NOTE: Some OpenAI models (e.g. GPT‑5 as of Aug 2025) do not allow overriding the temperature
+        # parameter and will return an `unsupported_value` error if a custom temperature is provided.
+        # Leaving the temperature unset uses the model's default value (1.0) which is supported.
         r = client.chat.completions.create(
             model=OPENAI_MODEL,
-            messages=[{"role":"system","content":SYSTEM_PROMPT}, *messages],
-            temperature=0.4,
+            messages=[{"role": "system", "content": SYSTEM_PROMPT}, *messages],
+            # intentionally omit `temperature` argument
         )
         return r.choices[0].message.content
     return await asyncio.to_thread(_call)
