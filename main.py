@@ -320,13 +320,20 @@ async def analyze_image(image_bytes: bytes) -> str:
         # Use gpt-4o for vision; fallback to any model supporting images
         model_name = os.getenv("OPENAI_VISION_MODEL", "gpt-4o")
         def _call():
+            """
+            Make a request to the vision model.  Some image-capable models (for example
+            GPT‑4o and GPT‑5 vision) only accept the default temperature of 1.  Passing
+            a custom temperature causes a 400 error (`unsupported_value`) as seen in
+            the Render logs.  Therefore we omit the `temperature` parameter entirely
+            and rely on the model's default.
+            """
             response = client.chat.completions.create(
                 model=model_name,
                 messages=messages,
-                max_tokens=512,
-                temperature=0.3
+                max_tokens=512
             )
             return response.choices[0].message.content
+
         description = await asyncio.to_thread(_call)
         return description.strip() if description else ""
     except Exception:
