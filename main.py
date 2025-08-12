@@ -430,7 +430,11 @@ async def on_voice(message: Message):
     add_message(message.chat.id, "assistant", text)
 
     # 4) Доставка текста
-    await deliver(message.chat.id, text)
+    # Если включён псевдостриминг, мы уже отредактировали сообщение `draft` и передали полный текст
+    # через edit_streaming. В этом случае не отправляем текст повторно через deliver, чтобы
+    # избежать дублирования ответов. Если псевдостриминг отключен, используем deliver.
+    if not PSEUDOSTREAMING_ENABLED:
+        await deliver(message.chat.id, text)
 
     # 5) Озвучка (если включено)
     data = await azure_tts(text)
@@ -548,14 +552,19 @@ async def on_message(message: Message):
     ctx = build_context(message.chat.id)
 
     if PSEUDOSTREAMING_ENABLED:
+        # Создаём черновик и имитируем потоковый вывод, редактируя это сообщение.  Не
+        # вызываем deliver после завершения стрима, чтобы избежать дублирования ответа.
         draft = await message.answer("Готовлю ответ…")
         text = await llm_generate(ctx)
         await edit_streaming(draft, text)
+        # Добавляем запись о сообщении в память после завершения стрима
+        add_message(message.chat.id, "assistant", text)
+        return
     else:
+        # Псевдостриминг выключен: просто генерируем и доставляем ответ
         text = await llm_generate(ctx)
-
-    add_message(message.chat.id, "assistant", text)
-    await deliver(message.chat.id, text)
+        add_message(message.chat.id, "assistant", text)
+        await deliver(message.chat.id, text)
 
 dp.include_router(router)
 
